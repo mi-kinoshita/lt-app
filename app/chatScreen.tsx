@@ -13,15 +13,48 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Keyboard,
-  TouchableWithoutFeedback,
 } from "react-native";
 import Octicons from "@expo/vector-icons/Octicons";
-import { Ionicons, AntDesign } from "@expo/vector-icons";
-import { useRouter, Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { callGeminiAPI } from "../api/gemini";
 import { Message } from "../types/message";
 import { useProgressData } from "../hooks/useProgressData";
+import "react-native-get-random-values";
+import { v4 as uuidv4 } from "uuid";
+import { scenarios } from "./constants/scenarios";
+import { useFocusEffect } from "@react-navigation/native";
+
+const CONVERSATION_STORAGE_KEY_PREFIX = "chatConversation_";
+const CONVERSATION_SUMMARIES_KEY = "_conversationSummaries_";
+const USER_SETTINGS_KEY = "userSettings";
+const SURVEY_ANSWERS_KEY = "surveyAnswers";
+const TODAY_CHAT_TIME_KEY_PREFIX = "todayChatTime_";
+
+interface ConversationSummary {
+  id: string;
+  participantName: string;
+  lastMessage: string;
+  timestamp: string;
+  avatarUrl?: string;
+  initialPrompt?: string;
+  icon?: string;
+  text?: string;
+}
+
+interface UserSettings {
+  profileImageUri: string | null;
+  username: string | null;
+}
+
+interface SurveyAnswers {
+  q1?: string;
+  q2?: string[];
+  q3?: string;
+  username?: string;
+  [key: string]: any;
+}
 
 const ChatScreen = () => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -29,54 +62,277 @@ const ChatScreen = () => {
   const [isLoading, setIsLoading] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const router = useRouter();
-  const { progress, incrementSentCount } = useProgressData();
+  const { progress } = useProgressData();
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [chatTitle, setChatTitle] = useState("Chat");
 
-  const CONVERSATION_STORAGE_KEY = "chatConversation";
+  const params = useLocalSearchParams();
+  const initialPrompt = params.initialPrompt as string | undefined;
+  const routeConversationId = params.conversationId as string | undefined;
+
+  const [chatStartTime, setChatStartTime] = useState<number | null>(null);
+  const accumulatedDailyChatTimeRef = useRef<number>(0);
+  const currentDayRef = useRef<string | null>(null);
 
   const handleGoBack = useCallback(() => {
     router.back();
   }, [router]);
 
-  useEffect(() => {
-    const loadConversation = async () => {
-      try {
-        const storedConversation = await AsyncStorage.getItem(
-          CONVERSATION_STORAGE_KEY
-        );
-        if (storedConversation) {
-          const parsedConversation = JSON.parse(
-            storedConversation
-          ) as Message[];
-          setMessages(parsedConversation);
-        } else {
-          fetchInitialMessage();
+  const getTodayDateString = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = (today.getMonth() + 1).toString().padStart(2, "0");
+    const day = today.getDate().toString().padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      const today = getTodayDateString();
+      currentDayRef.current = today;
+
+      const loadTodayTime = async () => {
+        try {
+          const savedTime = await AsyncStorage.getItem(
+            `${TODAY_CHAT_TIME_KEY_PREFIX}${today}`
+          );
+          if (savedTime) {
+            accumulatedDailyChatTimeRef.current = parseInt(savedTime, 10);
+            console.log(
+              "Loaded today's accumulated chat time:",
+              accumulatedDailyChatTimeRef.current,
+              "ms"
+            );
+          } else {
+            accumulatedDailyChatTimeRef.current = 0;
+            console.log("No saved chat time for today. Starting from 0.");
+          }
+        } catch (error) {
+          console.error("Failed to load today's chat time:", error);
+          accumulatedDailyChatTimeRef.current = 0;
+        } finally {
+          setChatStartTime(Date.now());
+          console.log("Chat screen focused. Timer started.");
         }
-      } catch (error) {
-        console.error("Failed to load conversation history:", error);
-        fetchInitialMessage();
-      }
-    };
+      };
 
-    loadConversation();
-  }, []);
+      loadTodayTime();
 
-  // Save when messages are changed
+      return () => {
+        if (chatStartTime !== null) {
+          const endTime = Date.now();
+          const sessionDuration = endTime - chatStartTime;
+
+          accumulatedDailyChatTimeRef.current += sessionDuration;
+
+          const saveTodayTime = async () => {
+            try {
+              const dayToSaveUnder = currentDayRef.current;
+
+              if (dayToSaveUnder) {
+                await AsyncStorage.setItem(
+                  `${TODAY_CHAT_TIME_KEY_PREFIX}${dayToSaveUnder}`,
+                  accumulatedDailyChatTimeRef.current.toString()
+                );
+                console.log(
+                  `Chat screen blurred. Saved accumulated chat time for ${dayToSaveUnder}:`,
+                  accumulatedDailyChatTimeRef.current,
+                  "ms"
+                );
+              } else {
+                console.warn(
+                  "currentDayRef is null on blur, cannot save chat time."
+                );
+              }
+            } catch (error) {
+              console.error("Failed to save today's chat time:", error);
+            }
+          };
+          saveTodayTime();
+
+          setChatStartTime(null);
+          currentDayRef.current = null;
+          console.log(
+            "Chat screen blurred. Timer stopped. Session duration:",
+            sessionDuration,
+            "ms"
+          );
+        } else {
+          console.log("Chat screen blurred, but timer was not started.");
+        }
+      };
+    }, [])
+  );
+
   useEffect(() => {
-    const saveConversation = async () => {
-      try {
-        const jsonValue = JSON.stringify(messages);
-        await AsyncStorage.setItem(CONVERSATION_STORAGE_KEY, jsonValue);
-      } catch (error) {
-        console.error("Failed to save conversation history:", error);
+    const loadOrCreateConversation = async () => {
+      if (initialPrompt) {
+        const newId = uuidv4();
+        setConversationId(newId);
+
+        const selectedScenario = scenarios.find(
+          (s) => s.prompt === initialPrompt
+        );
+        const participantName = selectedScenario?.text || "Language AI";
+        setChatTitle(participantName);
+
+        const newSummary: ConversationSummary = {
+          id: newId,
+          participantName: participantName,
+          lastMessage: "New conversation started...",
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          avatarUrl: selectedScenario ? undefined : undefined,
+          initialPrompt: initialPrompt,
+          icon: selectedScenario?.icon,
+          text: selectedScenario?.text,
+        };
+        await saveConversationSummary(newSummary);
+
+        setMessages([]);
+        fetchInitialMessage(initialPrompt, newId);
+      } else if (routeConversationId) {
+        setConversationId(routeConversationId);
+        loadMessages(routeConversationId);
+        const summary = await getConversationSummary(routeConversationId);
+        if (summary) {
+          setChatTitle(summary.participantName);
+        } else {
+          setChatTitle("Language AI");
+        }
+      } else {
+        const defaultNewId = uuidv4();
+        setConversationId(defaultNewId);
+        const participantName = "Language AI";
+        setChatTitle(participantName);
+
+        const newSummary: ConversationSummary = {
+          id: defaultNewId,
+          participantName: participantName,
+          lastMessage: "Welcome!",
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          avatarUrl: undefined,
+        };
+        await saveConversationSummary(newSummary);
+        setMessages([]);
+        fetchInitialMessage("Hello!", defaultNewId);
       }
     };
 
-    if (messages.length > 0) {
-      saveConversation();
-    }
-  }, [messages]);
+    loadOrCreateConversation();
+  }, [params.initialPrompt, params.conversationId]);
 
-  // 新しいメッセージが追加されたときに自動的に一番下までスクロールする
+  const getConversationSummary = async (
+    id: string
+  ): Promise<ConversationSummary | undefined> => {
+    try {
+      const storedSummaries = await AsyncStorage.getItem(
+        CONVERSATION_SUMMARIES_KEY
+      );
+      const summaries: ConversationSummary[] = storedSummaries
+        ? JSON.parse(storedSummaries)
+        : [];
+      return summaries.find((s) => s.id === id);
+    } catch (error) {
+      console.error(`Failed to get conversation summary for ID: ${id}`, error);
+      return undefined;
+    }
+  };
+
+  const loadMessages = async (id: string) => {
+    setIsLoading(true);
+    try {
+      const storedConversation = await AsyncStorage.getItem(
+        `${CONVERSATION_STORAGE_KEY_PREFIX}${id}`
+      );
+      if (storedConversation) {
+        const parsedConversation = JSON.parse(storedConversation) as Message[];
+        setMessages(parsedConversation);
+      } else {
+        setMessages([]);
+      }
+    } catch (error) {
+      console.error(
+        `Failed to load messages for conversation ID: ${id}`,
+        error
+      );
+      setMessages([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveMessages = async (id: string, msgs: Message[]) => {
+    try {
+      const jsonValue = JSON.stringify(msgs);
+      await AsyncStorage.setItem(
+        `${CONVERSATION_STORAGE_KEY_PREFIX}${id}`,
+        jsonValue
+      );
+    } catch (error) {
+      console.error(
+        `Failed to save messages for conversation ID: ${id}`,
+        error
+      );
+    }
+  };
+
+  const saveConversationSummary = async (summary: ConversationSummary) => {
+    try {
+      const storedSummaries = await AsyncStorage.getItem(
+        CONVERSATION_SUMMARIES_KEY
+      );
+      let summaries: ConversationSummary[] = storedSummaries
+        ? JSON.parse(storedSummaries)
+        : [];
+
+      const existingIndex = summaries.findIndex((s) => s.id === summary.id);
+      if (existingIndex > -1) {
+        summaries[existingIndex] = summary;
+      } else {
+        summaries.unshift(summary);
+      }
+
+      await AsyncStorage.setItem(
+        CONVERSATION_SUMMARIES_KEY,
+        JSON.stringify(summaries)
+      );
+    } catch (error) {
+      console.error(
+        `Failed to save conversation summary for ID: ${summary.id}`,
+        error
+      );
+    }
+  };
+
+  useEffect(() => {
+    if (!isLoading && conversationId && messages.length > 0) {
+      saveMessages(conversationId, messages);
+      const lastMessage = messages[messages.length - 1];
+      const updateSummaryWithExistingInfo = async () => {
+        const existingSummary = await getConversationSummary(conversationId);
+
+        const updatedSummary: ConversationSummary = {
+          id: conversationId,
+          participantName: existingSummary?.participantName || "Language AI",
+          lastMessage: lastMessage.text,
+          timestamp: lastMessage.timestamp,
+          avatarUrl: existingSummary?.avatarUrl,
+          initialPrompt: existingSummary?.initialPrompt,
+          icon: existingSummary?.icon,
+          text: existingSummary?.text,
+        };
+        await saveConversationSummary(updatedSummary);
+      };
+      updateSummaryWithExistingInfo();
+    }
+  }, [messages, isLoading, conversationId]);
+
   useEffect(() => {
     if (messages.length > 0 && flatListRef.current) {
       setTimeout(() => {
@@ -85,7 +341,6 @@ const ChatScreen = () => {
     }
   }, [messages]);
 
-  // キーボードが表示/非表示されたときのイベントハンドラ
   useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
       "keyboardDidShow",
@@ -104,49 +359,114 @@ const ChatScreen = () => {
   }, []);
 
   useEffect(() => {
-    console.log("API Key available:", !!process.env.EXPO_PUBLIC_GEMINI_API_KEY);
-    console.log(
-      "API Key partial:",
-      process.env.EXPO_PUBLIC_GEMINI_API_KEY?.substring(0, 5) + "..." || "none"
-    );
-
     if (!process.env.EXPO_PUBLIC_GEMINI_API_KEY) {
-      console.error("GEMINI_API_KEY is not defined in .env file.");
       Alert.alert("Configuration Error", "API key is not set.");
       return;
     }
-
-    console.log("Platform:", Platform.OS, Platform.Version);
   }, []);
 
-  const fetchInitialMessage = async () => {
+  const fetchInitialMessage = async (promptToSend: string, id: string) => {
+    setIsLoading(true);
     try {
-      const setup =
-        'You are LUNA, a Japanese language teacher. Please converse gently with people who have just started learning Japanese. LUNA is a bright and friendly idol-like character, but please minimize the use of exclamation marks in conversations. In conversations, do not use kanji or katakana. The characters to use are hiragana and roman letters (alphabet). Use kanji and katakana if the user permits their use. For example, write "こんにちは" as "こんにちは" and "ありがとう" as "ありがとう". For words usually written in kanji, such as "先生" (sensei) and "時間" (jikan), always write them in hiragana as "せんせい" and "じかん". 😊 When talking to someone for the first time, first greet them, ask for their name, and remember it well. Let\'s keep the conversation in short sentences, like a well-paced back-and-forth. Remember the content of previous conversations and talk based on that. However, please do not talk about politics or religion.';
-
       const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
       if (!apiKey) return;
 
-      const responseText = await callGeminiAPI(
-        [{ sender: "user", text: setup, timestamp: "" }],
-        apiKey
+      const storedUserSettings = await AsyncStorage.getItem(USER_SETTINGS_KEY);
+      let currentUsername: string | null = null;
+      if (storedUserSettings) {
+        const parsedSettings: UserSettings = JSON.parse(storedUserSettings);
+        currentUsername = parsedSettings.username || null;
+      }
+
+      const storedSurveyAnswers = await AsyncStorage.getItem(
+        SURVEY_ANSWERS_KEY
       );
-      console.log("Initial message response (Flash):", responseText);
+      let currentCharacterLevel: string | null = null;
+      if (storedSurveyAnswers) {
+        const parsedAnswers: SurveyAnswers = JSON.parse(storedSurveyAnswers);
+        currentCharacterLevel = parsedAnswers.q3 || null;
+      }
+
+      let baseSetup =
+        'You are LUNA, a Japanese language teacher. Please converse gently with people who have just started learning Japanese. LUNA is a bright and friendly idol-like character, but please minimize the use of exclamation marks in conversations. In conversations, do not use kanji or katakana. The characters to use are hiragana and roman letters (alphabet). Use kanji and katakana if the user permits their use. For example, write "こんにちは" as "こんにちは" and "ありがとう" as "ありがとう". For words usually written in kanji, such as "先生" (sensei) and "時間" (jikan), always write them in hiragana as "せんせい" and "じかん". 😊 When talking to someone for the first first time, first greet them, ask for their name, and remember it well. Let\'s keep the conversation in short sentences, like a well-paced back-and-forth. Remember the content of previous conversations and talk based on that. However, please do not talk about politics or religion.';
+
+      if (currentUsername) {
+        baseSetup += ` The user's name is ${currentUsername}.`;
+      }
+      if (currentCharacterLevel) {
+        baseSetup += ` Please converse with them using Japanese characters up to ${currentCharacterLevel}.`;
+
+        if (
+          currentCharacterLevel.includes("romaji") &&
+          !currentCharacterLevel.includes("hiragana")
+        ) {
+          baseSetup += ` Output should primarily be in romaji.`;
+        } else if (
+          currentCharacterLevel.includes("hiragana") &&
+          !currentCharacterLevel.includes("katakana")
+        ) {
+          baseSetup += ` Output should be in hiragana and romaji. Avoid katakana and kanji.`;
+        } else if (
+          currentCharacterLevel.includes("katakana") &&
+          !currentCharacterLevel.includes("kanji")
+        ) {
+          baseSetup += ` Output can use hiragana, katakana, and romaji. Avoid kanji.`;
+        } else if (currentCharacterLevel.includes("kanji")) {
+          baseSetup += ` Output can use kanji, hiragana, katakana, and romaji as appropriate for a native speaker.`;
+        }
+      }
+
+      const firstMessageText = promptToSend;
+
+      const messagesForApi: Message[] = [
+        { sender: "user", text: baseSetup, timestamp: "" },
+      ];
+      if (firstMessageText && firstMessageText !== baseSetup) {
+        messagesForApi.push({
+          sender: "user",
+          text: firstMessageText,
+          timestamp: "",
+        });
+      } else if (!firstMessageText) {
+        messagesForApi.push({
+          sender: "user",
+          text: "Start the conversation.",
+          timestamp: "",
+        });
+      }
+
+      const responseText = await callGeminiAPI(messagesForApi, apiKey);
 
       const timestamp = new Date().toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
       });
 
-      const initialMessage: Message = {
+      const initialAiMessage: Message = {
         text: responseText,
         sender: "ai",
         timestamp,
       };
 
-      setMessages([initialMessage]);
+      setMessages([initialAiMessage]);
+
+      if (id) {
+        const existingSummary = await getConversationSummary(id);
+
+        const updatedSummary: ConversationSummary = {
+          id: id,
+          participantName: existingSummary?.participantName || "Language AI",
+          lastMessage: initialAiMessage.text,
+          timestamp: timestamp,
+          avatarUrl: existingSummary?.avatarUrl,
+          initialPrompt: existingSummary?.initialPrompt,
+          icon: existingSummary?.icon,
+          text: existingSummary?.text,
+        };
+        await saveConversationSummary(updatedSummary);
+      }
     } catch (error) {
-      console.error("Error fetching initial message (Flash):", error);
+      console.error("Error fetching initial message:", error);
       const timestamp = new Date().toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
@@ -157,11 +477,29 @@ const ChatScreen = () => {
         timestamp,
       };
       setMessages([initialMessage]);
+
+      if (id) {
+        const existingSummary = await getConversationSummary(id);
+
+        const updatedSummary: ConversationSummary = {
+          id: id,
+          participantName: existingSummary?.participantName || "Language AI",
+          lastMessage: initialMessage.text,
+          timestamp: timestamp,
+          avatarUrl: existingSummary?.avatarUrl,
+          initialPrompt: existingSummary?.initialPrompt,
+          icon: existingSummary?.icon,
+          text: existingSummary?.text,
+        };
+        await saveConversationSummary(updatedSummary);
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleSendMessage = useCallback(async () => {
-    if (!inputText.trim() || isLoading) return;
+    if (!inputText.trim() || isLoading || !conversationId) return;
 
     const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
     if (!apiKey) {
@@ -181,25 +519,13 @@ const ChatScreen = () => {
       timestamp,
     };
 
-    // Add user message
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
+    const messagesToSend = [...messages, userMessage];
+    setMessages(messagesToSend);
     setInputText("");
-
-    // Close the keyboard
     Keyboard.dismiss();
 
-    // Increment the sent count after sending a message
-    incrementSentCount();
-    console.log("Message sent count incremented: ", progress.sent);
-
     try {
-      console.log(
-        "Sending message to Gemini Flash:",
-        inputText.substring(0, 50) + (inputText.length > 50 ? "..." : "")
-      );
-
-      const response = await callGeminiAPI(updatedMessages, apiKey);
+      const response = await callGeminiAPI(messagesToSend, apiKey);
 
       const aiTimestamp = new Date().toLocaleTimeString([], {
         hour: "2-digit",
@@ -212,10 +538,24 @@ const ChatScreen = () => {
         timestamp: aiTimestamp,
       };
 
-      // Get the latest state before adding the AI message and update
-      setMessages((currentMessages) => [...currentMessages, aiMessage]);
+      const finalMessages = [...messagesToSend, aiMessage];
+      setMessages(finalMessages);
 
-      console.log("Response from Gemini Flash processed successfully");
+      if (conversationId) {
+        const existingSummary = await getConversationSummary(conversationId);
+
+        const updatedSummary: ConversationSummary = {
+          id: conversationId,
+          participantName: existingSummary?.participantName || "Language AI",
+          lastMessage: aiMessage.text,
+          timestamp: aiTimestamp,
+          avatarUrl: existingSummary?.avatarUrl,
+          initialPrompt: existingSummary?.initialPrompt,
+          icon: existingSummary?.icon,
+          text: existingSummary?.text,
+        };
+        await saveConversationSummary(updatedSummary);
+      }
     } catch (error) {
       console.error("Error processing message (Flash):", error);
 
@@ -230,46 +570,69 @@ const ChatScreen = () => {
         }),
       };
 
-      setMessages((currentMessages) => [...currentMessages, errorMessage]);
+      const messagesWithError = [...messagesToSend, errorMessage];
+      setMessages(messagesWithError);
+
+      if (conversationId) {
+        const existingSummary = await getConversationSummary(conversationId);
+
+        const updatedSummary: ConversationSummary = {
+          id: conversationId,
+          participantName: existingSummary?.participantName || "Language AI",
+          lastMessage: errorMessage.text,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          avatarUrl: existingSummary?.avatarUrl,
+          initialPrompt: existingSummary?.initialPrompt,
+          icon: existingSummary?.icon,
+          text: existingSummary?.text,
+        };
+        await saveConversationSummary(updatedSummary);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [inputText, isLoading, messages, incrementSentCount]);
+  }, [inputText, isLoading, messages, conversationId]);
 
-  const renderMessage = ({ item }: { item: Message }) => (
-    <View
-      style={[
-        styles.messageContainer,
-        item.sender === "user"
-          ? styles.userMessageContainer
-          : styles.aiMessageContainer,
-      ]}
-    >
-      {item.sender === "ai" && (
-        <Image
-          source={require("../assets/images/80sgirl.jpeg")}
-          style={styles.avatar}
-        />
-      )}
+  const renderMessage = useCallback(
+    ({ item }: { item: Message }) => (
       <View
         style={[
-          styles.messageBubble,
+          styles.messageContainer,
           item.sender === "user"
-            ? styles.userMessageBubble
-            : styles.aiMessageBubble,
+            ? styles.userMessageContainer
+            : styles.aiMessageContainer,
         ]}
       >
-        <Text
-          style={
+        {item.sender === "ai" && (
+          <Image
+            source={require("../assets/images/80sgirl.jpeg")}
+            style={styles.avatar}
+          />
+        )}
+        <View
+          style={[
+            styles.messageBubble,
             item.sender === "user"
-              ? styles.userMessageText
-              : styles.aiMessageText
-          }
+              ? styles.userMessageBubble
+              : styles.aiMessageBubble,
+          ]}
         >
-          {item.text}
-        </Text>
+          <Text
+            style={
+              item.sender === "user"
+                ? styles.userMessageText
+                : styles.aiMessageText
+            }
+          >
+            {item.text}
+          </Text>
+        </View>
       </View>
-    </View>
+    ),
+    []
   );
 
   return (
@@ -279,19 +642,28 @@ const ChatScreen = () => {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 40 : 40}
       >
-        {/* AppBar */}
-        <View style={styles.appBar}>
-          <TouchableOpacity onPress={handleGoBack} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="white" />
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => {
+              router.replace("/(tabs)/chatListScreen");
+            }}
+            style={styles.backButton}
+          >
+            <Ionicons name="arrow-back" size={24} color="#000" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.paymentIcon}>
-            <AntDesign name="heart" size={24} color="#4a43a1" />
-          </TouchableOpacity>
+          <View style={styles.headerTitleContainer}>
+            <Text
+              style={styles.headerTitle}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {chatTitle}
+            </Text>
+          </View>
+          <View style={styles.headerRightPlaceholder}></View>
         </View>
 
-        {/* Main Content Area */}
         <View style={styles.mainContentArea}>
-          {/* Chat List */}
           <FlatList
             ref={flatListRef}
             data={messages}
@@ -309,12 +681,8 @@ const ChatScreen = () => {
             initialNumToRender={20}
             maxToRenderPerBatch={20}
             windowSize={21}
-            // 重要: 以下の2行を削除
-            // maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-            // automaticallyAdjustKeyboardInsets={true}
           />
 
-          {/* Input Area */}
           <View style={styles.inputArea}>
             <TextInput
               style={styles.input}
@@ -325,7 +693,7 @@ const ChatScreen = () => {
               }
               multiline
               returnKeyType="default"
-              editable={!isLoading}
+              editable={!isLoading && !!conversationId}
               onFocus={() => {
                 setTimeout(() => {
                   flatListRef.current?.scrollToEnd({ animated: true });
@@ -335,12 +703,12 @@ const ChatScreen = () => {
             <TouchableOpacity
               style={[
                 styles.sendButton,
-                isLoading || !inputText.trim()
+                isLoading || !inputText.trim() || !conversationId
                   ? styles.sendButtonDisabled
                   : styles.sendButtonEnabled,
               ]}
               onPress={handleSendMessage}
-              disabled={!inputText.trim() || isLoading}
+              disabled={!inputText.trim() || isLoading || !conversationId}
             >
               {isLoading ? (
                 <ActivityIndicator color="#ccc" size="small" />
@@ -348,7 +716,9 @@ const ChatScreen = () => {
                 <Octicons
                   name="paper-airplane"
                   size={20}
-                  color={inputText.trim() ? "#4a43a1" : "#ccc"}
+                  color={
+                    inputText.trim() && !!conversationId ? "#4a43a1" : "#ccc"
+                  }
                 />
               )}
             </TouchableOpacity>
@@ -364,25 +734,35 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
   },
-  appBar: {
-    backgroundColor: "#4a43a1",
-    paddingTop: Platform.OS === "ios" ? 10 : 5,
-    paddingBottom: 10,
-    paddingHorizontal: 15,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  backButton: {
-    padding: 10,
-  },
-  paymentIcon: {
-    padding: 10,
-  },
   mainContentArea: {
     flex: 1,
     display: "flex",
     flexDirection: "column",
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 10,
+  },
+  backButton: {
+    paddingRight: 10,
+  },
+  headerTitleContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#000",
+    textAlign: "center",
+  },
+  headerRightPlaceholder: {
+    width: 24 + 10,
   },
   chatList: {
     flex: 1,

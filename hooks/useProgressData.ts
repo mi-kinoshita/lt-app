@@ -1,84 +1,154 @@
-// hooks/useProgressData.ts
 import { useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const PROGRESS_DATA_KEY = 'progressData';
 const START_DATE_KEY = 'chatStartDate';
-const LAST_LOGIN_DATE_KEY = 'lastLoginDate';
+const VOCABULARY_STORAGE_KEY = 'userVocabulary';
+const TODAY_CHAT_TIME_KEY_PREFIX = 'todayChatTime_';
+
+
+interface DailyStudyTime {
+  date: string;
+  minutes: number;
+}
 
 interface ProgressData {
   points: number;
   streak: number;
-  time: string;
-  sent: number;
+  wordCount: number;
   startDate: number | null;
-  lastLoginDate: number | null;
+  weeklyStudyTime: DailyStudyTime[];
 }
 
 const defaultProgressData: ProgressData = {
   points: 0,
   streak: 0,
-  time: '0 hours 0 minutes',
-  sent: 0,
+  wordCount: 0,
   startDate: null,
-  lastLoginDate: null,
+  weeklyStudyTime: [],
 };
 
-export const useProgressData = () => {
+interface UseProgressDataReturn {
+    progress: ProgressData;
+    updateProgress: (newData: Partial<ProgressData>) => void;
+    loadProgress: () => Promise<void>;
+}
+
+export const useProgressData = (): UseProgressDataReturn => {
   const [progress, setProgress] = useState<ProgressData>(defaultProgressData);
 
-  const loadProgress = useCallback(async () => {
-    try {
-      const storedData = await AsyncStorage.getItem(PROGRESS_DATA_KEY);
-      const storedStartDate = await AsyncStorage.getItem(START_DATE_KEY);
-      const storedLastLoginDate = await AsyncStorage.getItem(LAST_LOGIN_DATE_KEY);
-
-      let initialData: ProgressData = defaultProgressData;
-      if (storedData) {
-        try {
-          const parsedData = JSON.parse(storedData) as ProgressData;
-          initialData = {
-            points: Number(parsedData.points || 0),
-            streak: Number(parsedData.streak || 0),
-            time: parsedData.time || '0 hours 0 minutes',
-            sent: Number(parsedData.sent || 0),
-            startDate: parsedData.startDate ? Number(parsedData.startDate) : null,
-            lastLoginDate: parsedData.lastLoginDate ? Number(parsedData.lastLoginDate) : null
-          };
-        } catch (parseError) {
-          console.error('Failed to parse stored progress data', parseError);
-        }
-      }
-
-      let startDate = initialData.startDate;
-      if (!startDate && storedStartDate) {
-        startDate = parseInt(storedStartDate, 10);
-      } else if (!startDate) {
-        startDate = Date.now();
-        await AsyncStorage.setItem(START_DATE_KEY, startDate.toString());
-      }
-
-      let lastLoginDate = initialData.lastLoginDate;
-      if (!lastLoginDate && storedLastLoginDate) {
-        lastLoginDate = parseInt(storedLastLoginDate, 10);
-      }
-
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayTimestamp = today.getTime();
-
-      if (!lastLoginDate || todayTimestamp > lastLoginDate) {
-        initialData.points += 10;
-        await AsyncStorage.setItem(LAST_LOGIN_DATE_KEY, todayTimestamp.toString());
-        lastLoginDate = todayTimestamp;
-      }
-
-      setProgress({ ...initialData, startDate, lastLoginDate });
-      console.log('Loaded progress:', initialData);
-    } catch (error) {
-      console.error('Failed to load progress data', error);
-    }
+  const calculateDaysSinceLaunch = useCallback((startDate: number | null): number => {
+    if (!startDate) return 0;
+    const start = new Date(startDate);
+    const now = new Date();
+    start.setHours(0, 0, 0, 0);
+    now.setHours(0, 0, 0, 0);
+    const diffTime = Math.abs(now.getTime() - start.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
   }, []);
+
+    const loadProgress = useCallback(async () => {
+        try {
+            const storedData = await AsyncStorage.getItem(PROGRESS_DATA_KEY);
+            const storedStartDate = await AsyncStorage.getItem(START_DATE_KEY);
+            const storedVocabulary = await AsyncStorage.getItem(VOCABULARY_STORAGE_KEY);
+
+            let initialData: Partial<ProgressData> = {};
+            if (storedData) {
+                try {
+                    initialData = JSON.parse(storedData);
+                } catch (parseError) {
+                    console.error('Failed to parse stored progress data', parseError);
+                }
+            }
+
+            let startDate = initialData.startDate;
+            if (!startDate && storedStartDate) {
+                 startDate = parseInt(storedStartDate, 10);
+            } else if (!startDate) {
+                startDate = Date.now();
+                await AsyncStorage.setItem(START_DATE_KEY, startDate.toString());
+            }
+
+            const currentStreak = calculateDaysSinceLaunch(startDate);
+            const currentPoints = currentStreak * 10;
+
+            let vocabularyCount = 0;
+            if (storedVocabulary) {
+                try {
+                    const parsedVocabulary = JSON.parse(storedVocabulary);
+                    vocabularyCount = Array.isArray(parsedVocabulary) ? parsedVocabulary.length : 0;
+                } catch (vocabParseError) {
+                     console.error('Failed to parse stored vocabulary data', vocabParseError);
+                }
+            }
+
+            const allKeys = await AsyncStorage.getAllKeys();
+            const dailyTimeKeys = allKeys.filter(key => key.startsWith(TODAY_CHAT_TIME_KEY_PREFIX));
+
+            const dailyTimeData: DailyStudyTime[] = [];
+            const now = new Date();
+            const sevenDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+
+            const keyValues = await AsyncStorage.multiGet(dailyTimeKeys);
+
+            keyValues.forEach(kv => {
+              const key = kv[0];
+              const value = kv[1];
+
+              if (key && value) {
+                 const dateString = key.replace(TODAY_CHAT_TIME_KEY_PREFIX, '');
+                 const savedDate = new Date(dateString);
+
+                 if (!isNaN(savedDate.getTime())) {
+                     savedDate.setHours(0, 0, 0, 0);
+                     const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+
+                     if (savedDate >= sevenDaysAgo && savedDate <= todayMidnight) {
+                        const totalMilliseconds = parseInt(value, 10);
+                        const totalMinutes = Math.round(totalMilliseconds / 60000);
+
+                        dailyTimeData.push({ date: dateString, minutes: totalMinutes });
+                     }
+                 }
+              }
+            });
+
+            dailyTimeData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+             const last7Days: DailyStudyTime[] = [];
+             for (let i = 6; i >= 0; i--) {
+                 const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+                 const dateString = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+
+                 const existingData = dailyTimeData.find(d => d.date === dateString);
+                 last7Days.push({
+                     date: dateString,
+                     minutes: existingData ? existingData.minutes : 0,
+                 });
+             }
+
+
+            setProgress({
+                ...defaultProgressData,
+                ...initialData,
+                startDate,
+                streak: currentStreak,
+                points: currentPoints,
+                wordCount: vocabularyCount,
+                weeklyStudyTime: last7Days,
+            });
+
+        } catch (error) {
+            console.error('Failed to load progress data', error);
+             setProgress(defaultProgressData);
+        }
+    }, [calculateDaysSinceLaunch]);
+
+    const updateProgress = useCallback((newData: Partial<ProgressData>) => {
+        setProgress((prev) => ({ ...prev, ...newData }));
+    }, []);
 
   useEffect(() => {
     loadProgress();
@@ -87,68 +157,58 @@ export const useProgressData = () => {
   useEffect(() => {
     const saveProgress = async () => {
       try {
+        const dataToSave = {
+            points: progress.points,
+            streak: progress.streak,
+            wordCount: progress.wordCount,
+            startDate: progress.startDate,
+        };
         await AsyncStorage.setItem(
           PROGRESS_DATA_KEY,
-          JSON.stringify(progress)
+          JSON.stringify(dataToSave)
         );
-        if (progress.startDate) {
-          await AsyncStorage.setItem(START_DATE_KEY, progress.startDate.toString());
-        }
-        if (progress.lastLoginDate) {
-          await AsyncStorage.setItem(LAST_LOGIN_DATE_KEY, progress.lastLoginDate.toString());
-        }
-        console.log('Saved progress:', progress);
+         if (progress.startDate) {
+           await AsyncStorage.setItem(START_DATE_KEY, progress.startDate.toString());
+         }
+
+        console.log('Saved main progress:', dataToSave);
       } catch (error) {
-        console.error('Failed to save progress data', error);
+        console.error('Failed to save main progress data', error);
       }
     };
 
     saveProgress();
-  }, [progress]);
+  }, [progress.points, progress.streak, progress.wordCount, progress.startDate]);
 
-  const updateProgress = (newData: Partial<ProgressData>) => {
-    setProgress((prev) => ({ ...prev, ...newData }));
-  };
 
-  const incrementSentCount = useCallback(async () => {
-    setProgress((prev) => ({ ...prev, sent: prev.sent + 1 }));
-  }, []);
+    useEffect(() => {
+       const currentStreak = calculateDaysSinceLaunch(progress.startDate);
+        const currentPoints = currentStreak * 10;
+        setProgress(prev => {
+            if (prev.streak !== currentStreak || prev.points !== currentPoints) {
+                 return { ...prev, streak: currentStreak, points: currentPoints };
+            }
+            return prev;
+        });
 
-  const calculateStreak = () => {
-    if (progress.startDate) {
-      const start = new Date(progress.startDate);
-      const now = new Date();
-      start.setHours(0, 0, 0, 0);
-      now.setHours(0, 0, 0, 0);
-      const diffTime = Math.abs(now.getTime() - start.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      setProgress((prev) => ({ ...prev, streak: diffDays }));
-    }
-  };
+         const intervalId = setInterval(() => {
+             const latestStreak = calculateDaysSinceLaunch(progress.startDate);
+             const latestPoints = latestStreak * 10;
+              setProgress(prev => {
+                if (prev.streak !== latestStreak || prev.points !== latestPoints) {
+                     console.log(`Updating streak/points: ${latestStreak}/${latestPoints}`);
+                     return { ...prev, streak: latestStreak, points: latestPoints };
+                }
+                return prev;
+            });
+            console.log("Interval tick: Streak/Points updated.");
+         }, 60000);
 
-  const calculateTimeElapsed = () => {
-    if (progress.startDate) {
-      const start = new Date(progress.startDate);
-      const now = new Date();
-      const diffTime = Math.abs(now.getTime() - start.getTime());
-      const totalMinutes = Math.floor(diffTime / (1000 * 60));
-      const hours = Math.floor(totalMinutes / 60);
-      const minutes = totalMinutes % 60;
-      setProgress((prev) => ({ ...prev, time: `${hours} hours ${minutes} minutes` }));
-    }
-  };
 
-  useEffect(() => {
-    calculateStreak();
-    calculateTimeElapsed();
+        return () => clearInterval(intervalId);
 
-    const intervalId = setInterval(() => {
-      calculateStreak();
-      calculateTimeElapsed();
-    }, 60000);
+    }, [progress.startDate, calculateDaysSinceLaunch]);
 
-    return () => clearInterval(intervalId);
-  }, [progress.startDate]);
 
-  return { progress, updateProgress, incrementSentCount, loadProgress };
+  return { progress, updateProgress, loadProgress };
 };
