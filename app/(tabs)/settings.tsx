@@ -440,7 +440,7 @@ export default function SettingsScreen() {
               style={styles.linkItemWithIcon}
             >
               <Ionicons
-                name="book-outline"
+                name="document-text-outline"
                 size={24}
                 color="#202020"
                 style={styles.linkIcon}
