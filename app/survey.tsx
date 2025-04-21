@@ -18,6 +18,12 @@ const AI_CHARACTER_IMAGE = require("../assets/images/good.png");
 
 const SURVEY_COMPLETED_KEY = "hasCompletedSurvey";
 const SURVEY_ANSWERS_KEY = "surveyAnswers";
+const USER_SETTINGS_KEY = "userSettings"; // USER_SETTINGS_KEY を追加
+
+interface UserSettings {
+  profileImageUri: string | null;
+  username: string | null;
+}
 
 const questions = [
   {
@@ -109,7 +115,19 @@ export default function SurveyScreen() {
   const completeSurvey = async () => {
     setIsLoading(true);
     try {
-      await AsyncStorage.setItem(SURVEY_ANSWERS_KEY, JSON.stringify(answers));
+      // アンケート回答全体を保存
+      await AsyncStorage.setItem(SURVEY_ANSWERS_KEY, JSON.stringify(answers)); // 追加部分: ユーザー名だけを抜き出し、USER_SETTINGS_KEY にも保存
+
+      const username = answers.username || null;
+      const userSettingsForChat: UserSettings = {
+        profileImageUri: null,
+        username: username,
+      }; // UserSettings インターフェースの定義が必要です
+      await AsyncStorage.setItem(
+        USER_SETTINGS_KEY,
+        JSON.stringify(userSettingsForChat)
+      );
+
       await AsyncStorage.setItem(SURVEY_COMPLETED_KEY, "true");
       router.replace("/");
     } catch (e) {
