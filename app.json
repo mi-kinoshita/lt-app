@@ -13,7 +13,8 @@
       "bundleIdentifier": "com.miadesign.lunaTalk",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-         "NSPhotoLibraryUsageDescription": "This app allows you to select a photo from your photo library to register your profile picture."
+         "NSPhotoLibraryUsageDescription": "This app allows you to select a photo from your photo library to register your profile picture.",
+         "NSUserNotificationUsageDescription": "This app uses notifications to send you daily practice reminders."
       }
     },
     "android": {

@@ -171,7 +171,7 @@ export const useProgressData = (): UseProgressDataReturn => {
            await AsyncStorage.setItem(START_DATE_KEY, progress.startDate.toString());
          }
 
-        console.log('Saved main progress:', dataToSave);
+        // console.log('Saved main progress:', dataToSave);
       } catch (error) {
         console.error('Failed to save main progress data', error);
       }

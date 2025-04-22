@@ -137,7 +137,7 @@ export default function VocabularyScreen() {
         </View>
         <TouchableOpacity
           onPress={() => {
-            console.log("新しいチャットを作成 ボタンが押されました");
+            console.log("push button");
           }}
           style={styles.menuIcon}
         >
@@ -149,6 +149,7 @@ export default function VocabularyScreen() {
           <TextInput
             style={styles.inputField}
             placeholder="Word"
+            placeholderTextColor="#ccc"
             value={newWord}
             onChangeText={setNewWord}
             onSubmitEditing={() => {}}
@@ -156,6 +157,7 @@ export default function VocabularyScreen() {
           <TextInput
             style={styles.inputField}
             placeholder="Meaning"
+            placeholderTextColor="#ccc"
             value={newMeaning}
             onChangeText={setNewMeaning}
             onSubmitEditing={addWord}

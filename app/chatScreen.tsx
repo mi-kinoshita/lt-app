@@ -692,6 +692,7 @@ const ChatScreen = () => {
               placeholder={
                 isLoading ? "Processing..." : "Please enter a message"
               }
+              placeholderTextColor="#ccc"
               multiline
               returnKeyType="default"
               editable={!isLoading && !!conversationId}
