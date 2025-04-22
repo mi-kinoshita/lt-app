@@ -10,7 +10,9 @@ import {
   Alert,
   Keyboard,
   ActivityIndicator,
+  Platform,
 } from "react-native";
+import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AntDesign, Ionicons } from "@expo/vector-icons";
 import { Swipeable } from "react-native-gesture-handler";
@@ -190,8 +192,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    // paddingTop: 10,
     paddingBottom: 10,
+    paddingTop: Platform.OS === "android" ? Constants.statusBarHeight : 0,
   },
   menuIcon: {
     padding: 5,

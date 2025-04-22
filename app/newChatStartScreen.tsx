@@ -6,7 +6,9 @@ import {
   FlatList,
   TouchableOpacity,
   SafeAreaView,
+  Platform,
 } from "react-native";
+import Constants from "expo-constants";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { scenarios, Scenario } from "./constants/scenarios";
@@ -76,7 +78,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingTop: Platform.select({
+      ios: 20,
+      android: 30,
+      default: 0, // iOS, Android 以外のプラットフォームの場合のデフォルト値
+    }),
     paddingBottom: 10,
   },
   backButton: {

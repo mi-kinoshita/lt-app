@@ -9,7 +9,9 @@ import {
   Image,
   ActivityIndicator,
   Alert,
+  Platform,
 } from "react-native";
+import Constants from "expo-constants";
 import { router } from "expo-router";
 import { AntDesign, Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -248,6 +250,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     // paddingTop: 10,
     paddingBottom: 10,
+    paddingTop: Platform.OS === "android" ? Constants.statusBarHeight : 0,
   },
   menuIcon: {
     padding: 5,

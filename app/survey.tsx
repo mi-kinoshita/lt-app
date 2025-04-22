@@ -10,7 +10,9 @@ import {
   ActivityIndicator,
   ScrollView,
   Image,
+  Platform,
 } from "react-native";
+import Constants from "expo-constants";
 import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 

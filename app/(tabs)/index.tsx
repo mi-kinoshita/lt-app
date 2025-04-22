@@ -9,7 +9,9 @@ import {
   ScrollView,
   Linking,
   Button,
+  Platform,
 } from "react-native";
+import Constants from "expo-constants";
 import { useRouter, Link } from "expo-router";
 import { FontAwesome, Ionicons, AntDesign } from "@expo/vector-icons";
 import { useProgressData } from "../../hooks/useProgressData";
@@ -406,6 +408,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingBottom: 10,
+    paddingTop: Platform.OS === "android" ? Constants.statusBarHeight : 0,
   },
   headerLeftPlaceholder: {
     width: 38,

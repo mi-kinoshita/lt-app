@@ -14,6 +14,7 @@ import {
   KeyboardAvoidingView,
   Keyboard,
 } from "react-native";
+import Constants from "expo-constants";
 import Octicons from "@expo/vector-icons/Octicons";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";

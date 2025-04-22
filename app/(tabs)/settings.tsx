@@ -11,7 +11,9 @@ import {
   SafeAreaView,
   Linking,
   ScrollView,
+  Platform,
 } from "react-native";
+import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -479,6 +481,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingBottom: 10,
+    paddingTop: Platform.OS === "android" ? Constants.statusBarHeight : 0,
   },
   menuIcon: {
     padding: 5,
