@@ -12,7 +12,8 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.miadesign.lunaTalk",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+         "NSPhotoLibraryUsageDescription": "This app allows you to select a photo from your photo library to register your profile picture."
       }
     },
     "android": {
@@ -35,7 +36,7 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#000"
         }
       ]
     ],

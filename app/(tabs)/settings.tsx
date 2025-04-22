@@ -131,7 +131,7 @@ export default function SettingsScreen() {
     if (status !== "granted") {
       Alert.alert(
         "Permission Denied",
-        "Sorry, we need camera roll permissions to make this work!"
+        "This app allows you to select a photo from your photo library to register your profile picture."
       );
       return;
     }
